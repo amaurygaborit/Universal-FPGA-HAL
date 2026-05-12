@@ -1,101 +1,69 @@
 #!/bin/bash
-
-# Exit immediately if a command exits with a non-zero status
 set -e
 
-# ==========================================
-# 1. BUILD CONFIGURATION & VERIFICATION
-# ==========================================
+# --- 1. CONFIGURATION ---
 BOARD=$1
 APP_NAME="blinky"
 
 if [ -z "$BOARD" ]; then
-    echo "Error: Target board must be specified."
-    echo "Usage: ./build.sh <board_name> (e.g., ./build.sh icesugar_nano)"
+    echo "Error: Target board required (e.g., ./build.sh icesugar_nano)"
     exit 1
 fi
 
 OUTPUT_PREFIX="soc_${BOARD}"
 
-# Define hardware parameters based on the selected board
 case $BOARD in
     icesugar_nano)
         FPGA_TYPE="--lp1k"
         FPGA_PKG="cm36"
         ;;
     *)
-        echo "Error: Unrecognized board specified ($BOARD)."
+        echo "Error: Unrecognized board ($BOARD)"
         exit 1
         ;;
 esac
 
-echo "--- Starting build process for board: $BOARD | App: $APP_NAME ---"
+echo "--- Building for $BOARD | App: $APP_NAME ---"
 
-# Clean and prepare the build directory
 mkdir -p build
 rm -f build/*
 
-# ==========================================
-# 2. SOFTWARE COMPILATION (C Bare-metal)
-# ==========================================
-echo "[1/5] Compiling C source code (Bare-metal RISC-V)..."
-
-# GCC Flags explanation:
-# -march=rv32i : Base integer instruction set only
-# -mabi=ilp32  : Standard 32-bit integer ABI
-# -Os          : Optimize for size
-# -ffreestanding -nostdlib : Do not use standard C library or startup files
+# --- 2. SOFTWARE COMPILATION ---
+echo "[1/4] Compiling C source..."
 riscv64-unknown-elf-gcc -march=rv32i -mabi=ilp32 -Os -ffreestanding -nostdlib \
-    -T software/linker.ld software/start.S software/*.c -o build/${APP_NAME}.elf
+    -T software/linker.ld software/start.S software/*.c -o build/${APP_NAME}.elf -lgcc
 
-echo "[2/5] Generating memory initialization file (${APP_NAME}_ram.txt)..."
-
-# Extract raw machine code
+echo "[2/4] Generating RAM init file..."
 riscv64-unknown-elf-objcopy -O binary build/${APP_NAME}.elf build/${APP_NAME}.bin
 
-# Convert raw binary to 32-bit Little Endian hexadecimal text format for Verilog $readmemh
+# Convert raw binary to 32-bit Little Endian hex text for Verilog BRAM initialization ($readmemh)
 python3 -c "
 import sys
 with open('build/${APP_NAME}.bin', 'rb') as f:
     while chunk := f.read(4):
-        # Pad with null bytes if the chunk is less than 4 bytes
         chunk = chunk.ljust(4, b'\x00')
         print(f\"{int.from_bytes(chunk, 'little'):08x}\")
 " > build/${APP_NAME}_ram.txt
 
-# ==========================================
-# 3. HARDWARE SYNTHESIS
-# ==========================================
-echo "[3/5] Translating SystemVerilog to Verilog-2005 (sv2v)..."
+# --- 3. HARDWARE SYNTHESIS ---
+echo "[3/4] Synthesizing hardware (Yosys)..."
 
-# Enable nullglob so unmatched patterns expand to nothing instead of the literal string
 shopt -s nullglob
-
-# Gather all potential source files into an array
-SRC_FILES=(cpu/*.v cpu/*.sv boards/$BOARD/*.sv)
-
-# Disable nullglob to return to standard bash behavior
+SRC_FILES=(boards/soc_pkg.sv cpu/*.v cpu/*.sv boards/$BOARD/*.sv)
 shopt -u nullglob
 
-# Verify that we actually found some source files
 if [ ${#SRC_FILES[@]} -eq 0 ]; then
-    echo "Error: No Verilog (.v) or SystemVerilog (.sv) files found in cpu/ or boards/$BOARD/."
+    echo "Error: No source files found."
     exit 1
 fi
 
-# Combine the universal CPU core and the board-specific top module
+echo " -> Translating SystemVerilog to pure Verilog with sv2v..."
 sv2v "${SRC_FILES[@]}" > build/${OUTPUT_PREFIX}.v
 
-echo "[4/5] Synthesizing hardware (Yosys)..."
-
-# Yosys reads the compiled Verilog and will natively pull the initialized RAM text file during synthesis
 yosys -q -p "read_verilog build/${OUTPUT_PREFIX}.v; synth_ice40 -top top -json build/${OUTPUT_PREFIX}.json"
 
-# ==========================================
-# 4. PLACE AND ROUTE (PNR) & BITSTREAM
-# ==========================================
-echo "[5/5] Running Place-and-Route and generating Bitstream (NextPNR & Icepack)..."
-
+# --- 4. PLACE & ROUTE ---
+echo "[4/4] Place & Route and Bitstream..."
 nextpnr-ice40 -q $FPGA_TYPE --package $FPGA_PKG \
     --pcf boards/$BOARD/*.pcf \
     --json build/${OUTPUT_PREFIX}.json \
@@ -103,4 +71,4 @@ nextpnr-ice40 -q $FPGA_TYPE --package $FPGA_PKG \
 
 icepack build/${OUTPUT_PREFIX}.asc build/${OUTPUT_PREFIX}.bin
 
-echo "BUILD SUCCESSFUL! Bitstream generated at: build/${OUTPUT_PREFIX}.bin"
+echo "Success! Bitstream: build/${OUTPUT_PREFIX}.bin"

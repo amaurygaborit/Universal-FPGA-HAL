@@ -2,7 +2,7 @@
 .global _start
 
 _start:
-    # 2 Ko of RAM
+    # 512 words -> 2 Ko of RAM
     li sp, 2048
 
     call main

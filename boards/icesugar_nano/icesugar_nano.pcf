@@ -1,22 +1,7 @@
-# boards/icesugar_nano.pcf
-
-# Horloge principale (doit correspondre à 'input logic clk' dans top.sv)
 set_io clk D1
 
-# LED de la carte (doit correspondre à 'output logic led_o' dans top.sv)
-set_io led_o B6
+# io_pins[0] to the led
+set_io io_pins[0] B6
 
-# =====================================================================
-# BROCHES NON UTILISÉES (Commentées pour éviter les avertissements)
-# Décommentez-les lorsque vous ajouterez l'UART ou le SPI à votre CPU.
-# =====================================================================
-
-# set_io TXD B3
-# set_io RXD A3
-
-# set_io spi_cs_n D5
-# set_io spi_miso F5
-# set_io spi_mosi E4
-# set_io spi_clk  E5
-
-# set_io RESET    C5
+# io_pins[1] to test
+set_io io_pins[1] B3
